@@ -603,6 +603,16 @@ function viewPeople(){
       (!q || norm(p.n+" "+p.org+" "+p.pos+" "+p.lih+" "+p.sec).includes(q)));
     list.sort((a,b)=> (b.p-a.p) || (b.where?1:0)-(a.where?1:0) || a.org.localeCompare(b.org));
   }
+  // kurze Erklaerung, warum jemand in "Empfohlen" bzw. "Weitere" steht
+  const NOTE = {
+    rec: "<b>Empfohlen</b> = die wichtigsten Gesprächspartner:innen für das Messeteam: Fachebene (IT-Leitung, Architektur, "
+       + "IAM/Plattform, Betrieb, Schul-IT, Produkt/Partner) bei relevanten Organisationen, höchstens 3 pro Organisation. "
+       + "Gesprächseinstieg und Fundort (Talk/Stand) stehen auf der Karte.",
+    more: "<b>Weitere</b> = ebenfalls hoch bewertet, aber nicht in „Empfohlen“: Rolle unklar, Organisation schon mit 3 Personen "
+       + "in „Empfohlen“ vertreten, oder <b>Management</b> (oberste Leitung wie CEO/Geschäftsführung, Präsident:in, "
+       + "Bürgermeister:in) – diese Kontakte pflegt eher die Geschäftsführung.",
+  };
+  if(NOTE[f.src]) h += `<p class="summary">${NOTE[f.src]}</p>`;
   h += `<p class="count">${list.length} Personen</p>`;
   h += list.slice(0, UI.limit.people).map(p=>renderPersonCard(p, kind)).join("") || `<p class="empty">Keine Treffer.</p>`;
   if(list.length > UI.limit.people) h += `<button class="btn more" data-more="people">Weitere ${list.length-UI.limit.people} anzeigen</button>`;

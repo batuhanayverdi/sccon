@@ -110,8 +110,11 @@ def write_overview(ws, b, a, report, allp, speakers, booths, talks, n_b2=0, n_a2
          f"(Blatt „Stände“, oben beginnend, nach Halle/Stand sortiert).")
     line(f"Vorträge: {len(a)} mit Prio 1, {n_a2} mit Prio 2 (Blatt „Vorträge“). In „Wer geht?“ bitte eintragen.")
     n_m = 0 if mgmt is None else len(mgmt)
-    line(f"Kontakte: {len(report)} empfohlen (Fachebene), {n_k2} weitere, {n_m} Management "
-         f"(Blatt „Kontakte“, Spalte „Stufe“). Management = oberste Leitungsebene, eher für die Geschäftsführung.")
+    line(f"Kontakte: {len(report)} empfohlen, {n_k2} weitere, {n_m} Management (Blatt „Kontakte“, Spalte „Stufe“).")
+    line("  empfohlen = wichtigste Gesprächspartner:innen für das Messeteam: Fachebene (IT-Leitung, Architektur, "
+         "IAM/Plattform, Betrieb, Schul-IT, Produkt/Partner) bei relevanten Organisationen, max. 3 pro Organisation.")
+    line("  weitere = ebenfalls hoch bewertet, aber Rolle unklar oder Organisation schon mit 3 Personen vertreten.")
+    line("  Management = oberste Leitung (CEO/Geschäftsführung, Präsident:in, Bürgermeister:in) – eher für die Geschäftsführung.")
     line("Wettbewerber sind im Blatt „Stände“ in der Spalte „Wettbewerber“ markiert.")
     line("Nur intern verwenden (personenbezogene Daten).")
     line()
