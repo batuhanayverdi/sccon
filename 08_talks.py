@@ -114,6 +114,14 @@ def main():
     # kural: Startup-Pitch'ler (10 dk) IAM/Kimlik konusu degilse en fazla 2
     pitch = df["title"].str.match(r"(?i)^pitch\b") & ~df["topics"].fillna("").str.contains("IAM")
     df.loc[pitch & (df["relevance"] == 3), "relevance"] = 2
+    # Prio 1 (intern 3) nur fuer Kernthemen: Modell vergibt sonst ~25 % Prio 1 (zu viele zum Besuchen).
+    # Uebrige Prio-1-Sessions -> Prio 2; Buehnenprogramm zu Souveraenitaet/Open Source bleibt Prio 1.
+    core = df["topics"].fillna("").str.contains(r"IAM/IdM/SSO|openDesk/Kollaboration|Schul-IT/Bildung")
+    stage_sov = (df["format"].str.contains("Stage") & ~df["format"].str.contains("Booth")
+                 & df["topics"].fillna("").str.contains("Digitale Souveränität/Open Source") & ~pitch)
+    down = (df["relevance"] == 3) & ~core & ~stage_sov
+    print(f"Prio 1 -> Prio 2 (kein Kernthema): {int(down.sum())}")
+    df.loc[down, "relevance"] = 2
     # Univention-eigene Beitraege (Veranstalter oder Speaker von Univention): immer Prio 1, Team-Praesenz
     own = (df["host_org"] + " " + df["speakers"]).str.contains(UNIVENTION_RE)
     df.loc[own, ["relevance", "why", "goal"]] = [3, "Eigener Beitrag von Univention",
