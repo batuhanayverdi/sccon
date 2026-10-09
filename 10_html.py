@@ -179,7 +179,7 @@ def main():
     speakers = []
     for i, r in enumerate(spk_df.to_dict("records")):
         speakers.append({
-            "id": f"spk{i}|{s(r.get('name'))}", "n": s(r.get("name")), "pos": s(r.get("position")),
+            "id": f"spk|{s(r.get('name'))}|{s(r.get('organization'))}", "n": s(r.get("name")), "pos": s(r.get("position")),
             "org": s(r.get("organization")), "rel": prio_internal(r.get("max_talk_relevance")),
             "pp": n(r.get("person_priority")), "ses": s(r.get("sessions")),
         })

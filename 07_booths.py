@@ -140,6 +140,9 @@ def main():
     df = df.merge(sc, on="id", how="left")
     df.loc[df["own"], ["visit_priority", "visit_goal", "is_competitor", "why", "booth_question"]] = \
         [0, OWN_GOAL, False, "Univention-Stand: Treffpunkt des Teams", ""]
+    # Fachfremde Organisationen (Abfall, Vermessung, Mobilfunk ...) hoechstens Prio 2 (intern 2)
+    off = df["exhibitor"].str.contains(r"(?i)abfall|vermessung|geoinform|mobilfunk|umwelt|verkehr|wasser|energie")
+    df.loc[off & (df["visit_priority"] == 3), "visit_priority"] = 2
     # Sicherheitsnetz: trotz Prompt durchgerutschte Grundlagenfragen ("Unterstuetzen Sie OIDC/SAML ...?") leeren
     q = df["booth_question"].fillna("")
     basic = (q.str.contains(r"(?i)\b(?:oidc|openid|saml|ldap|scim|keycloak)\b")
