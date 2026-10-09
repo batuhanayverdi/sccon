@@ -282,10 +282,13 @@ def main():
         # Modell-Ebene per Titel korrigieren: CIO/CDO/IT-Leitung sind Ansprechpartner fuer das Messeteam
         # (Fachebene); CEO/Geschaeftsfuehrung/Vorstand/Buergermeister:in usw. immer Management.
         pos_ = (c["position"].astype(str) + " " + c["li_headline"].astype(str))
-        top_ = pos_.str.contains(r"(?i)\b(?:ceo|coo|cfo)\b|chief executive|managing director|geschäftsführ|vorstand|"
-                                 r"präsident|president|staatssekret|state secretary|minister|bürgermeister|mayor|"
-                                 r"landrat|landrätin|mitglied der geschäftsleitung|kreisrat|regionsrät|stadtrat|"
-                                 r"behördenleit|amtschef")
+        # Wortgrenzen wichtig: sonst "Landratsamt" -> Landrat, "Ministerium" -> Minister, "Referentin des Vorstands"
+        top_ = pos_.str.contains(r"(?i)\b(?:ceo|coo|cfo)\b|chief executive|managing director|\bgeschäftsführ\w*|"
+                                 r"\b(?:vize)?präsident(?:in)?\b|\b(?:vice )?president\b|^\s*vorstand|\bvorständin\b|"
+                                 r"\bvorstandsvorsitz\w*|\bstaatssekretär(?:in)?\b|state secretary|\bminister(?:in)?\b|"
+                                 r"\b(?:ober)?bürgermeister(?:in)?\b|\bmayor\b|\blandrat\b|\blandrätin\b|"
+                                 r"mitglied der geschäftsleitung|\bkreisr(?:at|ätin)\b|\bregionsr(?:at|ätin)\b|"
+                                 r"\bstadtr(?:at|ätin)\b|behördenleit|amtschef")
         it_ = pos_.str.contains(r"(?i)\b(?:cio|cdo|cto|ciso)\b|chief (?:information|digital|technology)|it-leit|"
                                 r"leiter\w* (?:der )?(?:it|digitalisierung)|head of it|leitung (?:it|digitalisierung)")
         c.loc[top_, "level"] = "Management"
