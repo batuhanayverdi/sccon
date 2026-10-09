@@ -24,7 +24,7 @@ from datetime import datetime
 
 import pandas as pd
 
-from scc_common import DATA, SHEETS, print, unlabel
+from scc_common import DATA, SHEETS, TEAM_SECTOR, prio_internal, print, unlabel
 
 SRC = DATA / "SCC_Plan.xlsx"
 
@@ -68,7 +68,7 @@ def build_static(talks, booths, people):
     out = ['<div class="nojs-only"><p class="notice">Nur-Lese-Ansicht: Diese Vorschau führt keine Skripte aus. '
            'Zum Merken, für Notizen und den Kalender die Datei im Browser öffnen (Chrome/Safari/Edge, am Laptop).</p>',
            '<p><a href="#s-talks">Vorträge</a> · <a href="#s-booths">Stände</a> · <a href="#s-people">Kontakte</a></p>',
-           '<h2 id="s-talks">Vorträge (Prio 3)</h2>']
+           '<h2 id="s-talks">Vorträge (Prio 1)</h2>']
     seen = set()
     t3 = sorted([t for t in talks if t["rel"] == 3], key=lambda t: (t["d"], t["s"]))
     for d in DAYS:
@@ -81,13 +81,13 @@ def build_static(talks, booths, people):
             rows.append(f'<li><b>{e(t["s"])}–{e(t["e"])}</b> · {e(t["loc"])}<br>{e(t["t"])}</li>')
         if rows:
             out.append(f"<h3>{DAYS[d]}</h3><ul class='plain'>" + "".join(rows) + "</ul>")
-    out.append('<h2 id="s-booths">Stände (Prio 3)</h2><ul class="plain">')
+    out.append('<h2 id="s-booths">Stände (Prio 1)</h2><ul class="plain">')
     def sk(b):
         return [int(n) for n in re.findall(r"\d+", b["st"])] or [999]
     for b in sorted([b for b in booths if b["p"] == 3], key=sk):
         out.append(f'<li><b>{e(b["st"])}</b> · {e(b["n"])}<br><span class="muted">{e(b["goal"])}'
                    f'{" · " + e(b["q"]) if b["q"] else ""}</span></li>')
-    out.append('</ul><h2 id="s-people">Empfohlene Kontakte</h2><ul class="plain">')
+    out.append('</ul><h2 id="s-people">Empfohlene Kontakte (Fachebene)</h2><ul class="plain">')
     for p in [p for p in people if p.get("rec") == 1]:
         role = p["pos"] or p["lih"]
         out.append(f'<li><b>{e(p["n"])}</b> · {e(role)}{" · " if role else ""}{e(p["org"])}'
@@ -102,20 +102,20 @@ def main():
                        "topics", "why", "goal", "speakers", "host_org", "format", "tracks", "also_at",
                        "teaser"]).fillna("")
     booths_df = unlabel(x[SHEETS["all_booths"]], ["id", "visit_priority", "hall", "stand", "exhibitor", "visit_goal",
-                        "why", "booth_question", "contacts_to_meet", "same_stand_with", "is_competitor",
-                        "categories", "teaser"]).fillna("")
-    people_df = unlabel(x[SHEETS["people"]], ["priority", "name", "position", "organization", "userType", "sector",
-                        "wo_finden", "talking_point", "why_person", "LinkedIn", "li_headline", "li_followers",
-                        "ProfileURL"]).fillna("")
-    meet_df = unlabel(x[SHEETS["meetings"]], ["tier", "id", "priority", "name", "position", "organization",
-                      "keep_for_person", "wo_finden", "talking_point", "why_person", "LinkedIn",
-                      "li_headline", "li_followers", "userType", "ProfileURL"]).fillna("")
+                        "why", "booth_question", "relationship", "contacts_to_meet", "same_stand_with",
+                        "is_competitor", "categories", "teaser"]).fillna("")
+    people_df = unlabel(x[SHEETS["people"]], ["is_new", "priority", "name", "position", "organization", "userType",
+                        "sector", "wo_finden", "talking_point", "why_person", "LinkedIn", "li_headline",
+                        "li_followers", "ProfileURL"]).fillna("")
+    meet_df = unlabel(x[SHEETS["meetings"]], ["tier", "is_new", "id", "priority", "name", "position", "organization",
+                      "level", "keep_for_person", "wo_finden", "talking_point", "why_person", "relationship",
+                      "LinkedIn", "li_headline", "li_followers", "userType", "ProfileURL"]).fillna("")
     spk_df = unlabel(x.get(SHEETS["speakers"], pd.DataFrame()), ["name", "position", "organization",
                      "person_priority", "max_talk_relevance", "sessions"]).fillna("")
 
     talks = []
     for r in talks_df.to_dict("records"):
-        rel = num(r.get("relevance"), 0)
+        rel = prio_internal(r.get("relevance"))
         text = f"{s(r.get('title'))} {s(r.get('teaser'))} {s(r.get('tracks'))}"
         talks.append({
             "id": s(r["id"]), "t": s(r.get("title")), "d": s(r.get("date")), "s": s(r.get("start")),
@@ -130,8 +130,8 @@ def main():
     for r in booths_df.to_dict("records"):
         booths.append({
             "id": s(r["id"]), "n": s(r.get("exhibitor")), "hall": s(r.get("hall")), "st": s(r.get("stand")),
-            "p": num(r.get("visit_priority"), 0), "goal": s(r.get("visit_goal")), "why": s(r.get("why")),
-            "q": s(r.get("booth_question")), "ct": s(r.get("contacts_to_meet")),
+            "p": prio_internal(r.get("visit_priority")), "goal": s(r.get("visit_goal")), "why": s(r.get("why")),
+            "q": s(r.get("booth_question")), "ct": s(r.get("contacts_to_meet")), "rel": s(r.get("relationship")),
             "same": s(r.get("same_stand_with")), "comp": 1 if s(r.get("is_competitor")).lower() in ("true", "ja") else 0,
             "cat": s(r.get("categories")), "tea": s(r.get("teaser")),
         })
@@ -142,7 +142,8 @@ def main():
     more_df = unlabel(more_df, ["id", "priority", "name", "position", "organization", "keep_for_person",
                       "wo_finden", "talking_point", "why_person", "LinkedIn", "li_headline", "li_followers",
                       "userType", "ProfileURL"]).fillna("") if len(more_df) else pd.DataFrame()
-    tier = {mid: (2 if s(r.get("tier")) == "weitere" else 1) for mid, r in meet_by_id.items()}
+    # Stufe -> rec: 1 = empfohlen (Fachebene), 2 = weitere, 3 = Management
+    tier = {mid: {"weitere": 2, "Management": 3}.get(s(r.get("tier")), 1) for mid, r in meet_by_id.items()}
     for r in more_df.to_dict("records"):
         if s(r.get("id")) and s(r.get("id")) not in meet_by_id:
             meet_by_id[s(r.get("id"))] = r
@@ -153,7 +154,8 @@ def main():
         pid = m.group(1) if m else f"{s(r.get('name'))}|{s(r.get('organization'))}"
         people.append({
             "id": pid, "n": s(r.get("name")), "pos": s(r.get("position")), "org": s(r.get("organization")),
-            "ut": s(r.get("userType")), "p": num(r.get("priority"), 0), "sec": s(r.get("sector")),
+            "ut": s(r.get("userType")), "p": prio_internal(r.get("priority")), "sec": s(r.get("sector")),
+            "new": 1 if s(r.get("is_new")) else 0, "team": 1 if s(r.get("sector")) == TEAM_SECTOR else 0,
             "where": s(r.get("wo_finden")), "tp": s(r.get("talking_point")), "why": s(r.get("why_person")),
             "li": s(r.get("LinkedIn")), "lih": s(r.get("li_headline")), "fol": n(r.get("li_followers")),
             "url": s(r.get("ProfileURL")),
@@ -163,21 +165,22 @@ def main():
     # konusmacilar gibi katilimci listesinde olmayanlari ekle
     known = {p["id"]: p for p in people}
     for mid, r in meet_by_id.items():
-        upd = {"rec": tier.get(mid, 1), "p": num(r.get("priority"), 3), "tp": s(r.get("talking_point")),
-               "why": s(r.get("why_person")), "where": s(r.get("wo_finden")), "cat": s(r.get("keep_for_person"))}
+        upd = {"rec": tier.get(mid, 1), "p": prio_internal(r.get("priority")) or 3, "tp": s(r.get("talking_point")),
+               "why": s(r.get("why_person")), "where": s(r.get("wo_finden")), "cat": s(r.get("keep_for_person")),
+               "lvl": s(r.get("level")), "rel": s(r.get("relationship")), "new": 1 if s(r.get("is_new")) else 0}
         if mid in known:
             known[mid].update({k: v for k, v in upd.items() if v != ""})
         else:
             people.append({"id": mid, "n": s(r.get("name")), "pos": s(r.get("position")),
                            "org": s(r.get("organization")), "ut": s(r.get("userType")) or "Programm-Speaker",
-                           "sec": "", "li": s(r.get("LinkedIn")), "lih": s(r.get("li_headline")),
+                           "sec": "", "team": 0, "li": s(r.get("LinkedIn")), "lih": s(r.get("li_headline")),
                            "fol": n(r.get("li_followers")), "url": s(r.get("ProfileURL")), **upd})
 
     speakers = []
     for i, r in enumerate(spk_df.to_dict("records")):
         speakers.append({
             "id": f"spk{i}|{s(r.get('name'))}", "n": s(r.get("name")), "pos": s(r.get("position")),
-            "org": s(r.get("organization")), "rel": num(r.get("max_talk_relevance"), 0),
+            "org": s(r.get("organization")), "rel": prio_internal(r.get("max_talk_relevance")),
             "pp": n(r.get("person_priority")), "ses": s(r.get("sessions")),
         })
 
@@ -189,7 +192,9 @@ def main():
             .replace("__TALK_URL__", TALK_URL).replace("__BOOTH_URL__", BOOTH_URL))
     OUT.write_text(html, encoding="utf-8")
     print(f"Talks: {len(talks)} | Stände: {len(booths)} | Personen: {len(people)} "
-          f"(empfohlen: {sum(p['rec'] == 1 for p in people)}, weitere: {sum(p['rec'] == 2 for p in people)}) | Speaker: {len(speakers)}")
+          f"(empfohlen: {sum(p.get('rec') == 1 for p in people)}, weitere: {sum(p.get('rec') == 2 for p in people)}, "
+          f"Management: {sum(p.get('rec') == 3 for p in people)}, Team: {sum(p.get('team', 0) for p in people)}, "
+          f"neu: {sum(p.get('new', 0) for p in people)}) | Speaker: {len(speakers)}")
     print(f"-> {OUT}  ({OUT.stat().st_size / 1e6:.1f} MB). Doppelklick zum Öffnen.")
 
 
@@ -395,7 +400,9 @@ function clean(kind, id){ const o = S[kind][id]; if(o && !o.pick && !o.note && !
 // ---------------- helpers ----------------
 const esc = s => String(s==null?"":s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const norm = s => String(s||"").toLowerCase().normalize("NFKD").replace(/[̀-ͯ]/g,"");
-function badge(r, label){ return `<span class="badge b${r}">${label||("Prio "+r)}</span>`; }
+// intern 3 = am wichtigsten; angezeigt wie gewohnt "Prio 1" = hoechste Prioritaet
+const PL = r => r>0 ? "Prio "+(4-r) : "Prio –";
+function badge(r, label){ return `<span class="badge b${r}">${label||PL(r)}</span>`; }
 function mins(t){ const m = /^(\d{1,2}):(\d{2})/.exec(t||""); return m ? (+m[1])*60 + (+m[2]) : null; }
 function standKey(st){ return (String(st).match(/\d+/g)||["999"]).map(n=>n.padStart(4,"0")).join("."); }
 function noteBlock(kind, id){
@@ -445,11 +452,12 @@ function renderTalkCard(t){
 }
 function renderBoothCard(b){
   const o = S.booths[b.id] || {};
-  const tier = "Prio " + b.p;
+  const tier = PL(b.p);
   return `<div class="card${o.pick?" picked":""}${o.done?" done":""}"><div class="row"><div class="grow">
     <div class="meta"><span><b>${esc(b.st)}</b></span>${badge(b.p, tier)}${b.comp?'<span class="bw">Wettbewerber</span>':""}<span>${esc(b.goal)}</span></div>
     <div class="title"><a href="${esc(boothUrl(b))}" target="_blank" rel="noopener">${esc(b.n)}</a></div>
     ${b.why?`<div class="kv"><b>Warum:</b> ${esc(b.why)}</div>`:""}
+    ${b.rel?`<div class="kv"><b>Bestehende Beziehung:</b> ${esc(b.rel)}</div>`:""}
     ${b.q?`<div class="kv"><b>Frage am Stand:</b> ${esc(b.q)}</div>`:""}
     ${b.ct?`<div class="kv"><b>Kontakte:</b> ${esc(b.ct)}</div>`:""}
     ${b.same?`<div class="kv"><b>Am selben Stand:</b> ${esc(b.same)}</div>`:""}
@@ -465,17 +473,18 @@ function renderPersonCard(p, kind){
   const st = `<label class="pick"><input type="checkbox" data-talked="${kind}" data-id="${esc(p.id)}"${o.status?" checked":""}> gesprochen</label>`;
   if(kind==="speakers"){
     return `<div class="card${o.pick?" picked":""}"><div class="row"><div class="grow">
-      <div class="meta">${badge(p.rel, "Vortrags-Prio "+p.rel)}${p.pp!==""?`<span>Kontakt-Prio ${esc(p.pp)}</span>`:""}</div>
+      <div class="meta">${badge(p.rel, "Vortrags-"+PL(p.rel))}${p.pp!==""?`<span>Kontakt-Prio ${esc(p.pp)}</span>`:""}</div>
       <div class="title">${esc(p.n)}</div><div class="kv">${esc(p.pos)}${p.org?" · "+esc(p.org):""}</div>
       <div class="kv"><b>Sessions:</b> ${esc(p.ses)}</div>${noteBlock(kind, p.id)}
     </div><div class="actions">${starBtn(kind, p.id)}${st}</div></div></div>`;
   }
   return `<div class="card${o.pick?" picked":""}"><div class="row"><div class="grow">
-    <div class="meta">${badge(p.p, "Prio "+p.p)}${p.rec===1?'<span>empfohlen</span>':""}${p.cat?`<span>${esc(p.cat)}</span>`:""}<span>${esc(p.ut)}</span>${p.sec?`<span>${esc(p.sec)}</span>`:""}</div>
+    <div class="meta">${p.new?'<span class="b3">NEU</span>':""}${p.team?'<span class="b3">Univention-Team</span>':badge(p.p)}${p.rec===1?'<span>empfohlen</span>':p.rec===3?'<span>Management</span>':""}${p.cat?`<span>${esc(p.cat)}</span>`:""}<span>${esc(p.ut)}</span>${p.sec?`<span>${esc(p.sec)}</span>`:""}</div>
     <div class="title">${esc(p.n)}</div>
     <div class="kv">${esc(p.pos||p.lih)}${p.org?" · "+esc(p.org):""}</div>
     ${p.where?`<div class="kv"><b>Wo finden:</b> ${esc(p.where)}</div>`:""}
     ${p.tp?`<div class="kv"><b>Gesprächseinstieg:</b> ${esc(p.tp)}</div>`:""}
+    ${p.rel?`<div class="kv"><b>Bestehende Beziehung:</b> ${esc(p.rel)}</div>`:""}
     ${p.why?`<details><summary>Begründung</summary><div class="kv">${esc(p.why)}</div></details>`:""}
     <div class="kv">${p.li?`<a href="${esc(p.li)}" target="_blank" rel="noopener">LinkedIn</a>`:""}${p.fol?` · ${esc(p.fol)} Follower`:""}${p.url?` · <a href="${esc(p.url)}" target="_blank" rel="noopener">SCC-Profil</a>`:""}</div>
     ${noteBlock(kind, p.id)}
@@ -543,7 +552,7 @@ function viewTalks(){
   }
   const seg = (name, cur, opts) => `<div class="seg">${opts.map(([v,l])=>`<button data-f="${name}" data-v="${v}" class="${cur===v?"on":""}">${l}</button>`).join("")}</div>`;
   let h = `<div class="filters">
-    ${seg("talk.tier", f.tier, [["top","Prio 3"],["more","Prio 2"],["all","Alle"],["mine","Gemerkt"]])}
+    ${seg("talk.tier", f.tier, [["top","Prio 1"],["more","Prio 2"],["all","Alle"],["mine","Gemerkt"]])}
     ${seg("talk.day", f.day, [["all","Alle Tage"]].concat(Object.entries(DAYS)))}
     ${seg("talk.sort", f.sort, [["rel","Nach Prio"],["time","Nach Zeit"]])}
     <select data-sel="talk.topic"><option value="">Alle Themen</option>${topics.map(x=>`<option${f.topic===x?" selected":""}>${esc(x)}</option>`).join("")}</select>
@@ -564,7 +573,7 @@ function viewBooths(){
   list.sort((a,b)=> standKey(a.st)<standKey(b.st)?-1:1);
   const seg = (name, cur, opts) => `<div class="seg">${opts.map(([v,l])=>`<button data-f="${name}" data-v="${v}" class="${cur===v?"on":""}">${l}</button>`).join("")}</div>`;
   let h = `<div class="filters">
-    ${seg("booth.tier", f.tier, [["3","Prio 3"],["2","Prio 2"],["all","Alle"],["mine","Gemerkt"]])}
+    ${seg("booth.tier", f.tier, [["3","Prio 1"],["2","Prio 2"],["all","Alle"],["mine","Gemerkt"]])}
     <select data-sel="booth.hall"><option value="">Alle Hallen</option>${halls.map(x=>`<option${f.hall===x?" selected":""}>${esc(x)}</option>`).join("")}</select>
     <input type="search" data-q="booth" placeholder="Suche: Firma, Stand, Kontakt…" value="${esc(f.q)}"></div>
     <p class="count">${list.length} Aussteller, nach Stand sortiert</p>`;
@@ -577,8 +586,8 @@ function viewPeople(){
   const f = UI.person, q = norm(f.q);
   const seg = (name, cur, opts) => `<div class="seg">${opts.map(([v,l])=>`<button data-f="${name}" data-v="${v}" class="${cur===v?"on":""}">${l}</button>`).join("")}</div>`;
   let h = `<div class="filters">
-    ${seg("person.src", f.src, [["rec","Empfohlene Kontakte"],["more","Weitere Kontakte"],["all","Alle Teilnehmenden"],["spk","Speaker"],["mine","Gemerkt"]])}
-    ${f.src==="all"?seg("person.min", f.min, [["0","alle"],["2","Prio ≥2"],["3","Prio 3"]]):""}
+    ${seg("person.src", f.src, [["rec","Empfohlen (Fachebene)"],["more","Weitere Kontakte"],["mgmt","Management"],["all","Alle Teilnehmenden"],["new","Neu"],["team","Univention-Team"],["spk","Speaker"],["mine","Gemerkt"]])}
+    ${f.src==="all"?seg("person.min", f.min, [["0","alle"],["2","Prio 1–2"],["3","Prio 1"]]):""}
     <input type="search" data-q="person" placeholder="Suche: Name, Organisation, Position…" value="${esc(f.q)}"></div>`;
   let list, kind = "people";
   if(f.src==="spk"){
@@ -591,7 +600,8 @@ function viewPeople(){
     return h || `<p class="empty">Noch niemand gemerkt.</p>`;
   } else {
     list = DATA.people.filter(p =>
-      (f.src==="rec" ? p.rec===1 : f.src==="more" ? p.rec===2 : p.p >= +f.min) &&
+      (f.src==="rec" ? p.rec===1 : f.src==="more" ? p.rec===2 : f.src==="mgmt" ? p.rec===3 :
+       f.src==="new" ? p.new : f.src==="team" ? p.team : p.p >= +f.min) &&
       (!q || norm(p.n+" "+p.org+" "+p.pos+" "+p.lih+" "+p.sec).includes(q)));
     list.sort((a,b)=> (b.p-a.p) || (b.where?1:0)-(a.where?1:0) || a.org.localeCompare(b.org));
   }

@@ -5,6 +5,7 @@ import base64
 import functools
 import json
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -93,7 +94,93 @@ MODEL = "gpt-5-mini"   # hesabinda olan ucuz bir model; ornek: "gpt-4.1-mini", "
 UNIVENTION_CONTEXT = """Univention (Bremen) ist ein Open-Source-Softwarehersteller für digitale Souveränität:
 - **UCS / UCS@school**: Directory/IdM, SSO, Schulserver, App-Ökosystem (v.a. Schulträger, Kommunen)
 - **Nubus**: Kubernetes-basierte IAM-Plattform (Keycloak/OIDC, Multi-Tenant, cloud-native), IAM-Komponente in openDesk
-Zielgruppen: öffentliche IT-Dienstleister, Kommunen, Länder/Bund, Schulträger sowie Partner/Integratoren."""
+Zielgruppen: öffentliche IT-Dienstleister, Kommunen, Länder/Bund, Schulträger sowie Partner/Integratoren.
+
+Wer die Ergebnisse liest: das Univention-Team auf der Messe (Produktmanagement, Technik, Vertrieb,
+Partnermanagement). Diese Leute kennen den IAM-Markt sehr gut. Die Geschäftsführung pflegt die Kontakte
+zur obersten Leitungsebene (CEO, Vorstand, Präsident:in, Staatssekretär:in) ohnehin selbst."""
+
+# Gemeinsame Qualitaetsregeln fuer alle Fragen / Gespraechseinstiege (07, 08b). Hintergrund: Feedback aus dem
+# Team ("ich muss nicht zu einem anderen IAM-Hersteller gehen und fragen, ob er OIDC unterstuetzt").
+QUESTION_RULES = """Regeln für Fragen und Gesprächseinstiege:
+- KEINE Grundlagenfragen, deren Antwort trivial, Branchenstandard oder auf der Website zu finden ist. Insbesondere
+  NIEMALS fragen, ob jemand OIDC, SAML, LDAP, SCIM, Keycloak, SSO oder "Schnittstellen" unterstützt –
+  das kann heute jedes IAM-/SaaS-Produkt, und Univention selbst bietet das alles an.
+- Bei Wettbewerbern (eigenes IAM-/Directory-/Schulplattform-Produkt) NICHT nach Funktionen fragen. Stattdessen
+  Marktbeobachtung: Welche Kunden/Projekte im öffentlichen Sektor, Ausschreibungen, Betriebsmodell
+  (SaaS/On-Prem/Partner), Preis-/Lizenzmodell, Roadmap, Positionierung gegenüber Open Source.
+- Bei Open-Source-/openDesk-Partnern: konkrete gemeinsame Kunden, Projekte oder Integrationsschritte, nicht
+  ob eine Integration "möglich" ist.
+- Bei Betreibern/Behörden/IT-Dienstleistern: nach ihren aktuellen Vorhaben, Problemen, Zeitplänen und
+  Entscheidungen fragen (z.B. Konsolidierung von Verzeichnisdiensten, Schul-IdM, openDesk-Rollout,
+  Ablösung proprietärer Lösungen), nicht Univention-Produkte anpreisen.
+- Kein Verkaufsgespräch im ersten Satz ("Interesse an UCS/Nubus?" ist schlecht).
+- Ist eine bestehende Beziehung angegeben (relationship), daran anknüpfen statt sich vorzustellen.
+- Gibt es keine sinnvolle, konkrete Frage: leeren String zurückgeben statt einer generischen Frage.
+Schlechte Beispiele: "Welche Authentifizierungsstandards (OIDC, SAML) unterstützen Sie?",
+"Bieten Sie Integrationen zu Keycloak/LDAP an?", "Interesse an Austausch zu IdM-/SSO-Integrationen?"
+Gute Beispiele: "Welche Bundesländer setzen Ihre Lösung bereits für Schulen ein, und läuft das als SaaS?",
+"Wie weit ist Ihr openDesk-Rollout, und wer betreibt bei Ihnen das Identity-Management?"
+"""
+
+# Univention-Mitarbeitende werden nicht bewertet, aber angezeigt (Blatt "Univention-Team").
+# Veranstalter (Messe Berlin / SCC) bleiben ganz draussen.
+UNIVENTION_RE = re.compile(r"univention", re.I)
+ORGANIZER_RE = re.compile(r"smart country convention|messe berlin", re.I)
+TEAM_SECTOR = "Univention (eigenes Team)"
+
+
+def load_known_orgs() -> dict:
+    """Optional: data/known_orgs.csv  (Spalten: organisation,status,notiz)
+    Bestehende Kunden/Partner/Kontakte. Wird an das Modell gegeben (relationship) und in den Listen angezeigt,
+    damit keine Grundlagenfragen an Organisationen gestellt werden, mit denen wir laengst arbeiten.
+    Rueckgabe: {org_key: "Kunde – Notiz"}"""
+    import pandas as pd
+    f = DATA / "known_orgs.csv"
+    if not f.exists():
+        return {}
+    df = pd.read_csv(f, sep=None, engine="python").fillna("")
+    df.columns = [c.strip().lower() for c in df.columns]
+    out = {}
+    for _, r in df.iterrows():
+        k = org_key(str(r.get("organisation", "")))
+        if k:
+            out[k] = " – ".join(x for x in (str(r.get("status", "")).strip(), str(r.get("notiz", "")).strip()) if x)
+    print(f"known_orgs.csv: {len(out)} bekannte Organisationen")
+    return out
+
+
+def relationship(known: dict, org: str) -> str:
+    """Bekannte Beziehung zu einer Organisation (exakter org_key oder bekannter Name als Wortfolge darin)."""
+    k = org_key(org)
+    if not k or not known:
+        return ""
+    if k in known:
+        return known[k]
+    for kk, v in known.items():
+        if re.search(r"(?:^|\s)" + re.escape(kk) + r"(?:\s|$)", k):
+            return v
+    return ""
+
+
+# -------------------- Prio-Anzeige --------------------
+# Intern rechnen alle Schritte mit 0-3 (3 = am wichtigsten). Angezeigt wird wie gewohnt "Prio 1" = hoechste.
+def prio_label(v):
+    """intern 3/2/1/0 -> Anzeige 1/2/3/"–" """
+    try:
+        v = int(round(float(v)))
+    except (TypeError, ValueError):
+        return "–"
+    return {3: 1, 2: 2, 1: 3}.get(v, "–")
+
+
+def prio_internal(v) -> int:
+    """Anzeige 1/2/3/"–" (aus dem Excel) -> intern 3/2/1/0"""
+    try:
+        v = int(round(float(v)))
+    except (TypeError, ValueError):
+        return 0
+    return {1: 3, 2: 2, 3: 1}.get(v, 0)
 
 
 def get_openai_client():
@@ -197,10 +284,11 @@ def load_people_scored():
 
 
 # -------------------- Excel: sekme ve kolon adlari (09 yazar, 10 okur) --------------------
-# Excel artik 6 sekme: her konu tek sekmede, Prio 3 satirlari sari. (all_* ayni sekmeyi gosterir, 10 icin)
+# Excel: her konu tek sekmede, Prio-1-satirlari sari. (all_* ayni sekmeyi gosterir, 10 icin)
 SHEETS = {
     "overview": "Übersicht", "booths": "Stände", "agenda": "Vorträge", "meetings": "Kontakte",
     "people": "Alle Personen", "speakers": "Alle Speaker", "all_booths": "Stände", "all_talks": "Vorträge",
+    "team": "Univention-Team",
 }
 LABELS = {
     "id": "ID", "visit_priority": "Prio", "relevance": "Prio", "priority": "Prio",
@@ -217,7 +305,9 @@ LABELS = {
     "li_followers": "Follower", "userType": "Rolle", "sector": "Sektor", "City": "Stadt", "Country": "Land",
     "ProfileURL": "SCC-Profil", "person_priority": "Kontakt-Prio", "max_talk_relevance": "Vortrags-Prio",
     "sessions": "Sessions", "n_sessions": "Anzahl Sessions", "tier": "Stufe",
+    "level": "Ebene", "relationship": "Bestehende Beziehung", "is_new": "Neu",
 }
+PRIO_COLS = ("priority", "visit_priority", "relevance", "person_priority", "max_talk_relevance")
 
 
 def unlabel(df, keys):

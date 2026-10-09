@@ -23,7 +23,7 @@ from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
-from scc_common import DATA, HERE, RAW, print
+from scc_common import DATA, HERE, RAW, TEAM_SECTOR, print
 
 # -------------------- AYARLAR --------------------
 MODEL = "gpt-5-mini"
@@ -232,9 +232,10 @@ def main():
 
     # kurumu alakasiz, rolu eslesmeyen ve speaker olmayanlari API'ye gondermeden 0 say (maliyet)
     auto0 = (df["relevance"] == 0) & ~df["role_hit"] & (df["userType"] != "speaker")
+    team = df["sector"] == TEAM_SECTOR   # Univention-Kolleg:innen: nicht bewerten, nur anzeigen
 
     cache = load_cache()
-    todo = df[~auto0 & ~df["id"].isin(cache)]
+    todo = df[~auto0 & ~team & ~df["id"].isin(cache)]
     print(f"Otomatik 0: {int(auto0.sum())} | cache: {int(df['id'].isin(cache).sum())} | API'ye gidecek: {len(todo)} | Model: {MODEL}")
     if len(todo):
         client = get_client()
@@ -258,6 +259,8 @@ def main():
                   .rename(columns={"keep_for": "keep_for_person"}), on="id", how="left")
     df.loc[auto0, ["priority", "keep_for_person", "why_person", "confidence"]] = \
         [0, "Not relevant", "Organisation ohne erkennbaren Bezug (automatisch)", "auto"]
+    df.loc[team, ["priority", "keep_for_person", "why_person", "talking_point", "confidence"]] = \
+        [0, "Univention-Team", "Kolleg:in von Univention", "", "auto"]
 
     # LinkedIn verisi (06_linkedin.py ciktisi) varsa ekle
     li_f = DATA / "linkedin.csv"

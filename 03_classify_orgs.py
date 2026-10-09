@@ -24,7 +24,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import pandas as pd
 from openai import OpenAI
 
-from scc_common import DATA, HERE, print
+from scc_common import DATA, HERE, ORGANIZER_RE, TEAM_SECTOR, UNIVENTION_RE, print
 
 # -------------------- AYARLAR --------------------
 MODEL = "gpt-5-mini"   # hesabinda olan ucuz bir model; ornek: "gpt-4.1-mini", "gpt-4o-mini"
@@ -36,7 +36,8 @@ SHORTLIST_MAX = 250    # 04 adiminda profil cekilecek en fazla kisi
 PROMPT_VERSION = "v2"  # prompt'u degistirince artir -> eski cache kullanilmaz
 CACHE = DATA / "llm_cache" / f"orgs_{PROMPT_VERSION}.jsonl"
 
-# kendi kurumumuz ve etkinlik organizatoru siniflandirilmaz / shortlist'e girmez
+# kendi kurumumuz ve etkinlik organizatoru siniflandirilmaz / shortlist'e girmez.
+# Univention calisanlari kisi tablosunda KALIR (sektor "Univention (eigenes Team)"), organizator tamamen cikar.
 EXCLUDE_RE = re.compile(r"univention|smart country convention|messe berlin", re.I)
 
 SECTORS = [
@@ -205,7 +206,9 @@ def main():
     excluded = companies["organization"].fillna("").str.contains(EXCLUDE_RE)
     print(f"Haric tutulan kurum: {', '.join(companies.loc[excluded, 'organization'])}")
     companies = companies[~excluded]
-    people = people[~people["organization"].str.contains(EXCLUDE_RE)]
+    people = people[~people["organization"].str.contains(ORGANIZER_RE)]
+    is_team = people["organization"].str.contains(UNIVENTION_RE)
+    print(f"Univention-Team: {int(is_team.sum())} kisi (puanlanmaz, ama listelerde gorunur)")
 
     todo_all = companies.sort_values("n_people", ascending=False)
     if LIMIT:
@@ -237,6 +240,9 @@ def main():
     # ---- kisi on-skoru ----
     p = people.merge(cls[["org_key", "canonical_org", "sector", "relevance", "keep_for", "is_competitor"]],
                      on="org_key", how="left")
+    team = p["organization"].str.contains(UNIVENTION_RE)
+    p.loc[team, ["sector", "canonical_org"]] = [TEAM_SECTOR, "Univention"]
+    p.loc[team, "relevance"] = 0
     p["role_hit"] = p["position"].str.contains(ROLE_RE)
     p["role_neg"] = p["position"].str.contains(NEG_RE)
     p["has_position"] = p["position"].str.strip() != ""
@@ -250,7 +256,7 @@ def main():
 
     # rakipleri de dahil ediyoruz (is_competitor raporda ayrica gorunecek);
     # ayni kurum listeyi doldurmasin diye kurum basina MAX_PER_ORG
-    cand = p[(p["relevance"] >= 2) & ~p["role_neg"]].copy()
+    cand = p[(p["relevance"] >= 2) & ~p["role_neg"] & (p["sector"] != TEAM_SECTOR)].copy()
     cand["org_group"] = cand["canonical_org"].fillna(cand["org_key"])
     cand = cand.groupby("org_group", sort=False).head(MAX_PER_ORG)
     short = cand.head(SHORTLIST_MAX)

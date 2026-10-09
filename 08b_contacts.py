@@ -14,7 +14,13 @@ eleniyordu. Bu adim uc kaynaktan aday toplar ve hepsini ayni kriterle OpenAI'ye 
 Girdi : data/SCC_Univention_Report.xlsx (05), data/companies_classified.csv (03), data/booths.csv (07),
         data/talks.csv (08), data/raw/sessions (01)
 Cikti : data/contacts.csv  (09 bunu "Empfohlene Kontakte" icin kullanir)
-Cache : data/llm_cache/contacts_v1.jsonl
+Cache : data/llm_cache/contacts_v2.jsonl
+Opsiyonel: data/known_orgs.csv (bestehende Kunden/Partner -> "relationship")
+
+v2 (Feedback aus dem Team):
+  - level: "Fachebene" (Produkt/Technik/Betrieb/Referate -> fuer das Messeteam) vs. "Management"
+    (CEO/Vorstand/Praesident:in/Staatssekretaer:in -> pflegt die Geschaeftsfuehrung selbst)
+  - keine Grundlagenfragen im Gespraechseinstieg (QUESTION_RULES), bestehende Beziehungen beruecksichtigt
 """
 
 import re
@@ -22,11 +28,11 @@ from collections import defaultdict
 
 import pandas as pd
 
-from scc_common import (DATA, UNIVENTION_CONTEXT, get_openai_client, llm_json, load_pages, org_key, print,
-                        run_cached)
+from scc_common import (DATA, QUESTION_RULES, UNIVENTION_CONTEXT, get_openai_client, llm_json, load_known_orgs,
+                        load_pages, org_key, print, prio_label, relationship, run_cached)
 
 BATCH = 12
-CACHE = DATA / "llm_cache" / "contacts_v1.jsonl"
+CACHE = DATA / "llm_cache" / "contacts_v2.jsonl"
 BASE = "https://online.smartcountry.berlin"
 EXCLUDE = re.compile(r"univention|smart country convention|messe berlin", re.I)
 KEY_SECTORS = {"Öffentlicher IT-Dienstleister", "Bund", "Land", "Schulträger/Bildungsverwaltung",
@@ -38,42 +44,57 @@ NEG_ROLE = re.compile(r"(?i)\b(?:marketing|event\w*|hr|human resources|personal\
 CATEGORIES = ["Entscheider Verwaltung", "Öffentlicher IT-Dienstleister", "Schul-IT/Bildung",
               "Souveränität/openDesk-Ökosystem", "Partner/Integrator", "Wettbewerber",
               "Politik/Multiplikator", "Sonstiges"]
+LEVELS = ["Fachebene", "Management"]
 
 SYSTEM = UNIVENTION_CONTEXT + """
 
-Du wählst für das Univention-Team auf der Smart Country Convention die Personen aus, mit denen ein
-Gespräch am meisten bringt (Vertrieb, Partnerschaften, Produktfeedback). Bewerte jede Person nur anhand
-der Daten; nichts erfinden.
+Du wählst für das Univention-Messeteam (Produktmanagement, Technik, Partnermanagement, Vertrieb) auf der
+Smart Country Convention die Personen aus, mit denen ein Gespräch am meisten bringt. Bewerte jede Person nur
+anhand der Daten; nichts erfinden.
 
-priority (0-3):
-3 = unbedingt ansprechen:
-    - Leitung/Entscheider (CEO, CIO, CDO, Geschäftsführung, Abteilungs-/Referatsleitung, Staatssekretär:in,
-      Minister:in) bei öffentlichen IT-Dienstleistern, Ländern, Bund, Kommunen oder Bildungsverwaltungen
-    - Verantwortliche für IT-Betrieb, IAM/IdM, Plattformen, Arbeitsplatz/Kollaboration oder Schul-IT
-    - Leitung und Produkt-/Partnerverantwortliche im Souveränitäts-/openDesk-Ökosystem
-      (ZenDiS, OSBA, Sovereign Cloud Stack, Open-Source-Hersteller) und bei passenden Partnern/Integratoren
+level:
+- "Management": oberste Leitung – CEO, Vorstand, Geschäftsführung, Präsident:in, Minister:in,
+  Staatssekretär:in, Behördenleitung, Bürgermeister:in, Managing Director. Diese Kontakte pflegt die
+  Univention-Geschäftsführung selbst; für das Messeteam sind sie meist nicht der richtige Gesprächspartner.
+- "Fachebene": alle anderen – CIO/CDO/IT-Leitung, Abteilungs-/Referats-/Teamleitung, Referent:innen,
+  Architekt:innen, Produkt-/Plattform-/Projektverantwortliche, Betrieb/Admin, Partner-/Account-Manager:innen.
+
+priority (0-3) – aus Sicht des Messeteams:
+3 = unbedingt ansprechen (Fachebene):
+    - Verantwortliche für IT-Betrieb, IAM/IdM, Verzeichnisdienste, Plattformen/Kubernetes,
+      Arbeitsplatz/Kollaboration (openDesk) oder Schul-IT bei öffentlichen IT-Dienstleistern, Ländern, Bund,
+      Kommunen, Schulträgern/Bildungsverwaltungen
+    - CIO/CDO/IT-Leitung, Abteilungs-/Referatsleitung mit IT-Infrastruktur-Bezug in der Verwaltung
+    - Produkt-, Technik- und Partnerverantwortliche im Souveränitäts-/openDesk-Ökosystem (ZenDiS, OSBA,
+      Sovereign Cloud Stack, Open-Source-Hersteller) und bei passenden Partnern/Integratoren
     - Speaker, deren Session direkt Univention-Themen betrifft (Identität, Souveränität, openDesk,
       Deutschland-Stack, Plattformen, Schul-IT)
-2 = lohnt sich: passende Organisation und plausible Rolle, oder Multiplikator (Verband, Presse, Politik)
+2 = lohnt sich: passende Organisation und plausible Rolle, Multiplikator (Verband, Presse, Politik), oder
+    Management eines wichtigen Akteurs (Management höchstens 2, außer die Person spricht in einer
+    Session mit direktem Univention-Thema)
 1 = geringer Bezug (fachfremde Rolle, Themen wie Geodaten, Bau, Smart-City-Daten, KI-Anwendungen ohne
-    Plattform-/Identitätsbezug)
+    Plattform-/Identitätsbezug, Vertrieb/Marketing eines Ausstellers ohne Partnerbezug)
 0 = kein Bezug
-Ist die Position unbekannt, entscheidet die Organisation; dann höchstens 2, außer die Organisation ist ein
-zentraler Akteur (z.B. großer öffentlicher IT-Dienstleister, ZenDiS, Bildungsverwaltung eines Landes).
+Ist die Position unbekannt, entscheidet die Organisation; dann höchstens 2.
+In sessions steht vor jedem Titel unsere Session-Bewertung: [Prio 1] = für Univention am wichtigsten.
+relationship: bestehende Beziehung der Organisation zu Univention (Kunde/Partner/in Kontakt), falls bekannt.
 Wettbewerber (org_is_competitor) höchstens 2, category "Wettbewerber".
 
 why: EIN Satz (max. 20 Wörter), nur belegbare Fakten aus den Daten.
 talking_point: EIN konkreter Gesprächseinstieg (max. 25 Wörter), der zur tatsächlichen Rolle bzw. Session
-passt. Nicht jedem IdM aufdrängen: nur ansprechen, wenn es zur Rolle passt; sonst an Session, Organisation
-oder Souveränität/Plattform anknüpfen. Keine Behauptungen über die Organisation, die nicht in den Daten stehen.
-Alles auf Deutsch."""
+passt. Nicht jedem IdM aufdrängen: nur ansprechen, wenn es zur Rolle passt; sonst an Session, Projekt,
+Organisation oder Souveränität/Plattform anknüpfen. Keine Behauptungen über die Organisation, die nicht in
+den Daten stehen. Alles auf Deutsch.
+
+""" + QUESTION_RULES
 
 ITEM_SCHEMA = {
     "type": "object", "additionalProperties": False,
-    "required": ["id", "priority", "category", "why", "talking_point"],
+    "required": ["id", "priority", "level", "category", "why", "talking_point"],
     "properties": {
         "id": {"type": "string"},
         "priority": {"type": "integer", "enum": [0, 1, 2, 3]},
+        "level": {"type": "string", "enum": LEVELS},
         "category": {"type": "string", "enum": CATEGORIES},
         "why": {"type": "string"},
         "talking_point": {"type": "string"},
@@ -103,6 +124,7 @@ def main():
         booth_by.setdefault(b["org_key"], (s(b["stand"]), int(float(b["visit_priority"] or 0))))
     talks = pd.read_csv(DATA / "talks.csv").fillna("")
     trel = dict(zip(talks["id"], pd.to_numeric(talks["relevance"], errors="coerce").fillna(0).astype(int)))
+    known = load_known_orgs()
 
     def org_info(org):
         k = org_key(org)
@@ -114,6 +136,7 @@ def main():
             "org_why": "" if c is None else s(c.get("why")),
             "org_is_competitor": False if c is None else str(c.get("is_competitor")).lower() == "true",
             "booth": st, "booth_priority": bp,
+            "relationship": relationship(known, org),
         }
 
     # ---- program konusmacilari ve session'lari ----
@@ -122,7 +145,7 @@ def main():
     for sess in load_pages("sessions"):
         r = trel.get(sess["id"], 0)
         line = f"{sess.get('date', '')[5:]} {sess.get('start', '')} @ {sess.get('location', '')}"
-        title = f"[R{r}] {sess.get('name', '')[:90]}"
+        title = f"[Prio {prio_label(r)}] {sess.get('name', '')[:90]}"
         for p in sess.get("persons") or []:
             key = p.get("userId") or f"p:{p.get('id')}"
             d = spk.setdefault(key, {"name": f"{s(p.get('firstName'))} {s(p.get('lastName'))}".strip(),
@@ -199,13 +222,21 @@ def main():
         nonlocal client
         client = client or get_openai_client()
         cols = ["id", "name", "position", "organization", "linkedin_headline", "role_at_event", "sessions",
-                "org_sector", "org_relevance", "org_why", "org_is_competitor", "booth", "booth_priority"]
+                "org_sector", "org_relevance", "org_why", "org_is_competitor", "booth", "booth_priority",
+                "relationship"]
         items = [{c: r.get(c, "") for c in cols} for r in batch]
         return llm_json(client, SYSTEM, items, ITEM_SCHEMA, "contacts")
 
     res = run_cached(df.to_dict("records"), "id", CACHE, fn, BATCH)
     sc = pd.DataFrame(res.values()).drop_duplicates("id", keep="last")
     df = df.merge(sc, on="id", how="left")
+    # Sicherheitsnetz wie in 07: durchgerutschte Grundlagenfragen ("Unterstuetzen Sie OIDC/SAML?") leeren
+    tp = df["talking_point"].fillna("")
+    basic = (tp.str.contains(r"(?i)\b(?:oidc|openid|saml|ldap|scim|keycloak)\b")
+             & tp.str.contains(r"(?i)unterstütz|bieten sie|integration|schnittstelle|anbindung|standard"))
+    if basic.any():
+        print(f"Grundlagen-Gespraechseinstieg entfernt: {int(basic.sum())}")
+    df.loc[basic, "talking_point"] = ""
 
     # nerede bulunur: konusmalar + kurumun standi
     where = []
@@ -223,6 +254,7 @@ def main():
     print("\npriority:", df["priority"].value_counts().sort_index(ascending=False).to_dict())
     print("Prio 3 nach Quelle:", df[df["priority"] == 3]["source"].value_counts().to_dict())
     print("Prio 3 nach Kategorie:", df[df["priority"] == 3]["keep_for_person"].value_counts().to_dict())
+    print("Prio 3 nach Ebene:", df[df["priority"] == 3]["level"].value_counts().to_dict())
     pd.set_option("display.width", 220); pd.set_option("display.max_colwidth", 60)
     print(df[df["priority"] == 3].head(20)[["name", "position", "organization", "source"]].to_string(index=False))
     print(f"\n-> {DATA / 'contacts.csv'}")

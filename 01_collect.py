@@ -13,14 +13,19 @@ Kullanim:
   python 01_collect.py --probe attendees        # 3 kayit ceker, yapiyi data/probe_attendees.json'a yazar
   python 01_collect.py --probe x --filter "entity_pers"   # istedigin filterlist'i dene
   python 01_collect.py attendees speakers       # tam toplama (kaldigi yerden devam eder)
+  python 01_collect.py --fresh attendees sessions exhibitors
+        # GUNCELLEME: eski sayfalari data/raw/<ad>_<tarih>/ altina yedekler ve hepsini bastan ceker.
+        # Gerekli, cunku sayfalar alfabetik ve offset'li: yeni kayit gelince tum sayfalar kayar,
+        # eski sayfa dosyalari cache'ten okunursa yeni kisiler hic gorunmez.
 """
 
 import argparse
-import getpass
 import json
 import os
+import shutil
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 import functools
@@ -149,6 +154,15 @@ def probe(s, name: str, filterlist: str):
     print(f"Tam cikti: {out.resolve()}")
 
 
+def backup_raw(name: str):
+    """data/raw/<name> -> data/raw/<name>_<YYYYMMDD-HHMM> (sadece yeniden cekmeden once)."""
+    src = RAW_DIR / name
+    if src.exists() and any(src.glob("page_*.json")):
+        dst = RAW_DIR / f"{name}_{datetime.now():%Y%m%d-%H%M}"
+        shutil.move(str(src), str(dst))
+        print(f"[{name}] eski sayfalar yedeklendi -> {dst}")
+
+
 def collect(s, name: str, filterlist: str):
     out_dir = RAW_DIR / name
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -191,6 +205,8 @@ def main():
     ap.add_argument("entities", nargs="*", default=["attendees"])
     ap.add_argument("--probe", metavar="NAME", help="3 kayitlik deneme istegi at")
     ap.add_argument("--filter", help="filterlist degerini elle ver")
+    ap.add_argument("--fresh", action="store_true",
+                    help="eski sayfalari yedekle ve bastan cek (guncelleme icin)")
     args = ap.parse_args()
     print("Script basladi.")
 
@@ -208,6 +224,8 @@ def main():
         if not fl:
             print(f"'{name}' bilinmiyor, atliyorum.")
             continue
+        if args.fresh:
+            backup_raw(name)
         collect(s, name, fl)
 
 
