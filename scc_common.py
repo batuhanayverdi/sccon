@@ -116,6 +116,10 @@ QUESTION_RULES = """Regeln für Fragen und Gesprächseinstiege:
   Ablösung proprietärer Lösungen), nicht Univention-Produkte anpreisen.
 - Kein Verkaufsgespräch im ersten Satz ("Interesse an UCS/Nubus?" ist schlecht).
 - Ist eine bestehende Beziehung angegeben (relationship), daran anknüpfen statt sich vorzustellen.
+- openDesk-Partner (relationship enthält "openDesk"): Die Integration mit Univention besteht bereits – Nubus ist
+  das IAM in openDesk. NIEMALS fragen, ob es Integrationen mit openDesk, IdM/SSO oder Identity-Plattformen gibt
+  oder geplant sind. Stattdessen: gemeinsame Kunden und Rollouts, Erfahrungen/Feedback aus Projekten, Roadmap,
+  gemeinsame Auftritte oder Ausschreibungen.
 - Gibt es keine sinnvolle, konkrete Frage: leeren String zurückgeben statt einer generischen Frage.
 Schlechte Beispiele: "Welche Authentifizierungsstandards (OIDC, SAML) unterstützen Sie?",
 "Bieten Sie Integrationen zu Keycloak/LDAP an?", "Interesse an Austausch zu IdM-/SSO-Integrationen?"
@@ -148,6 +152,13 @@ def load_known_orgs() -> dict:
             out[k] = " – ".join(x for x in (str(r.get("status", "")).strip(), str(r.get("notiz", "")).strip()) if x)
     print(f"known_orgs.csv: {len(out)} bekannte Organisationen")
     return out
+
+
+def cache_key(item_id, rel: str) -> str:
+    """Cache-Schluessel: ohne bekannte Beziehung = id (alte Cache-Eintraege bleiben gueltig);
+    mit Beziehung = id + Hash, damit diese Eintraege nach Aenderung von known_orgs.csv neu bewertet werden."""
+    import hashlib
+    return str(item_id) if not rel else f"{item_id}|rel:{hashlib.md5(rel.encode('utf-8')).hexdigest()[:8]}"
 
 
 def relationship(known: dict, org: str) -> str:
@@ -223,7 +234,9 @@ def run_cached(items: list[dict], key: str, cache_file: Path, fn, batch: int, wo
         for line in cache_file.read_text(encoding="utf-8").splitlines():
             if line.strip():
                 r = json.loads(line)
-                cache[r[key]] = r
+                k = r.get(key) or r.get("id")   # eski cache satirlarinda "ck" yok -> id
+                if k:
+                    cache[k] = r
     todo = [it for it in items if it[key] not in cache]
     print(f"{cache_file.name}: {len(items)} kayit, {len(items) - len(todo)} cache'te, {len(todo)} API'ye gidecek")
     if not todo:

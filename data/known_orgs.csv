@@ -1,0 +1,10 @@
+organisation,status,notiz
+ZenDiS,openDesk-Partner,ZenDiS verantwortet openDesk; Nubus von Univention ist das IAM in openDesk
+Nextcloud,openDesk-Partner,Nextcloud ist Teil von openDesk; Anmeldung/IAM dort über Nubus (Univention)
+Open-Xchange,openDesk-Partner,OX ist Teil von openDesk; Anmeldung/IAM dort über Nubus (Univention)
+OX,openDesk-Partner,OX ist Teil von openDesk; Anmeldung/IAM dort über Nubus (Univention)
+Collabora,openDesk-Partner,Collabora ist Teil von openDesk; Anmeldung/IAM dort über Nubus (Univention)
+Element Software,openDesk-Partner,Element/Matrix ist Teil von openDesk; Anmeldung/IAM dort über Nubus (Univention)
+OpenProject,openDesk-Partner,OpenProject ist Teil von openDesk; Anmeldung/IAM dort über Nubus (Univention)
+XWiki,openDesk-Partner,XWiki ist Teil von openDesk; Anmeldung/IAM dort über Nubus (Univention)
+Open Source Business Alliance,Verband (eng verbunden),Peter Ganten (Univention) ist Vorstandsvorsitzender der OSBA

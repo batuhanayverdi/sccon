@@ -18,7 +18,7 @@ import pandas as pd
 
 from scc_common import (DATA, ORGANIZER_RE, QUESTION_RULES, UNIVENTION_CONTEXT, UNIVENTION_RE, get_openai_client,
                         llm_json, load_known_orgs, load_pages, load_people_scored, org_key, print, prio_label, relationship,
-                        run_cached)
+                        run_cached, cache_key)
 
 BATCH = 20
 CACHE = DATA / "llm_cache" / "booths_v3.jsonl"   # v3: keine Grundlagenfragen, Wettbewerber = Marktbeobachtung
@@ -135,8 +135,16 @@ def main():
                                     "n_booth_sessions", "relationship")} for r in batch]
         return llm_json(client, SYSTEM, items, ITEM_SCHEMA, "booths")
 
-    res = run_cached(df[~df["own"]].to_dict("records"), "id", CACHE, fn, BATCH)
-    sc = pd.DataFrame(res.values()).drop_duplicates("id", keep="last")
+    df["ck"] = [cache_key(i, r) for i, r in zip(df["id"], df["relationship"])]
+    ck_by_id = dict(zip(df["id"], df["ck"]))
+
+    def fn_ck(batch):
+        return [{**r, "ck": ck_by_id.get(r["id"], r["id"])} for r in fn(batch)]
+
+    res = run_cached(df[~df["own"]].to_dict("records"), "ck", CACHE, fn_ck, BATCH)
+    sc = pd.DataFrame([res[k] for k in df["ck"] if k in res]).drop(columns="ck", errors="ignore")
+    sc = sc.drop_duplicates("id", keep="last")
+    df = df.drop(columns="ck")
     df = df.merge(sc, on="id", how="left")
     df.loc[df["own"], ["visit_priority", "visit_goal", "is_competitor", "why", "booth_question"]] = \
         [0, OWN_GOAL, False, "Univention-Stand: Treffpunkt des Teams", ""]

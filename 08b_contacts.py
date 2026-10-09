@@ -29,7 +29,7 @@ from collections import defaultdict
 import pandas as pd
 
 from scc_common import (DATA, QUESTION_RULES, UNIVENTION_CONTEXT, get_openai_client, llm_json, load_known_orgs,
-                        load_pages, org_key, print, prio_label, relationship, run_cached)
+                        load_pages, org_key, print, prio_label, relationship, run_cached, cache_key)
 
 BATCH = 12
 CACHE = DATA / "llm_cache" / "contacts_v2.jsonl"
@@ -227,8 +227,16 @@ def main():
         items = [{c: r.get(c, "") for c in cols} for r in batch]
         return llm_json(client, SYSTEM, items, ITEM_SCHEMA, "contacts")
 
-    res = run_cached(df.to_dict("records"), "id", CACHE, fn, BATCH)
-    sc = pd.DataFrame(res.values()).drop_duplicates("id", keep="last")
+    df["ck"] = [cache_key(i, r) for i, r in zip(df["id"], df["relationship"])]
+    ck_by_id = dict(zip(df["id"], df["ck"]))
+
+    def fn_ck(batch):
+        return [{**r, "ck": ck_by_id.get(r["id"], r["id"])} for r in fn(batch)]
+
+    res = run_cached(df.to_dict("records"), "ck", CACHE, fn_ck, BATCH)
+    sc = pd.DataFrame([res[k] for k in df["ck"] if k in res]).drop(columns="ck", errors="ignore")
+    sc = sc.drop_duplicates("id", keep="last")
+    df = df.drop(columns="ck")
     df = df.merge(sc, on="id", how="left")
     # Sicherheitsnetz wie in 07: durchgerutschte Grundlagenfragen ("Unterstuetzen Sie OIDC/SAML?") leeren
     tp = df["talking_point"].fillna("")
