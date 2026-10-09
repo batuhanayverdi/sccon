@@ -21,8 +21,7 @@ from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
-from scc_common import (DATA, LABELS, PRIO_COLS, SHEETS, TEAM_SECTOR, UNIVENTION_RE, load_pages, org_key, prio_internal,
-                        prio_label, print)
+from scc_common import DATA, LABELS, PRIO_COLS, SHEETS, load_pages, org_key, prio_internal, prio_label, print
 
 OUT = DATA / "SCC_Plan.xlsx"
 MAX_PER_ORG = 4   # Meetings sekmesinde ayni kurumdan en fazla kac kisi
@@ -76,7 +75,7 @@ def write_sheet(xw, df, name, widths, mark=None):
                     cell.fill = MARK_FILL
 
 
-def write_overview(ws, b, a, report, allp, speakers, booths, talks, n_b2=0, n_a2=0, n_k2=0, mgmt=None, n_new=0):
+def write_overview(ws, b, a, report, allp, speakers, booths, talks, n_b2=0, n_a2=0, n_k2=0, mgmt=None):
     """Kisa, sade bir ilk sayfa."""
     bold = Font(bold=True)
     row = [1]
@@ -113,10 +112,7 @@ def write_overview(ws, b, a, report, allp, speakers, booths, talks, n_b2=0, n_a2
     n_m = 0 if mgmt is None else len(mgmt)
     line(f"Kontakte: {len(report)} empfohlen (Fachebene), {n_k2} weitere, {n_m} Management "
          f"(Blatt „Kontakte“, Spalte „Stufe“). Management = oberste Leitungsebene, eher für die Geschäftsführung.")
-    if n_new:
-        line(f"Neu seit dem letzten Stand: {n_new} Personen (Spalte „Neu“ in „Kontakte“ und „Alle Personen“).")
-    line("Wettbewerber sind im Blatt „Stände“ in der Spalte „Wettbewerber“ markiert. "
-         "Univention-Kolleg:innen stehen im Blatt „Univention-Team“.")
+    line("Wettbewerber sind im Blatt „Stände“ in der Spalte „Wettbewerber“ markiert.")
     line("Nur intern verwenden (personenbezogene Daten).")
     line()
     # Wichtigste Stände: fiziksel stand bazinda. Ayni standda cok sayida Prio-3 firma olan ortak standlar
@@ -317,19 +313,9 @@ def main():
         report, report_more, report_mgmt = tier_a.drop(columns=drop), tier_b.drop(columns=drop), tier_m.drop(columns=drop)
         print(f"contacts.csv kullanildi: {len(report)} empfohlen (Fachebene) + {len(report_more)} weitere "
               f"+ {len(report_mgmt)} Management")
-    m_cols = ["is_new", "priority", "name", "position", "organization", "level", "keep_for_person", "wo_finden",
+    m_cols = ["priority", "name", "position", "organization", "level", "keep_for_person", "wo_finden",
               "talking_point", "why_person", "relationship", "LinkedIn", "li_headline", "li_followers", "userType",
               "ProfileURL", "id"]
-    # "Neu": first_seen aus 02 (nur sinnvoll, wenn es schon einen frueheren Lauf gab)
-    new_ids = set()
-    pf = DATA / "people.csv"
-    if pf.exists():
-        pp = pd.read_csv(pf, dtype=str)
-        if "first_seen" in pp.columns and pp["first_seen"].nunique() > 1:
-            new_ids = set(pp.loc[pp["first_seen"] == pp["first_seen"].max(), "id"])
-    print(f"Neu seit letztem Lauf: {len(new_ids)} Personen")
-    for df_ in (report, report_more, report_mgmt):
-        df_["is_new"] = df_["id"].astype(str).isin(new_ids).map({True: "neu", False: ""})
     m_cols = [c for c in m_cols if c in report.columns or c in report_more.columns or c in report_mgmt.columns]
 
     comp = booths[booths["is_competitor"].astype(str).str.lower() == "true"].copy()
@@ -338,14 +324,13 @@ def main():
          "title": 45, "goal": 40, "speakers": 55, "overlaps_with": 45, "also_at": 25, "check": 30, "topics": 30, "location": 20,
          "name": 22, "position": 30, "organization": 30, "wo_finden": 35, "talking_point": 50,
          "why_person": 50, "keep_for_person": 25, "LinkedIn": 30, "li_headline": 35, "stand": 16,
-         "visit_goal": 22, "host_org": 25, "teaser": 50, "relationship": 25, "level": 12, "is_new": 6}
+         "visit_goal": 22, "host_org": 25, "teaser": 50, "relationship": 25, "level": 12}
     # ---- All_People: tum kayitli kisiler (attendee, staff, speaker, none) ----
     allp = pd.read_excel(DATA / "SCC_Univention_Report.xlsx", sheet_name="all_attendees").fillna("")
     allp["id"] = allp["ProfileURL"].astype(str).str.extract(r"--u-(.+)$")[0]
     allp["wo_finden"] = [" | ".join(talks_by_user.get(i, []) + ([stand_by_org[org_key(o)]]
                          if org_key(o) in stand_by_org else [])) for i, o in zip(allp["id"], allp["organization"])]
-    allp["is_new"] = allp["id"].astype(str).isin(new_ids).map({True: "neu", False: ""})
-    p_cols = [c for c in ["is_new", "priority", "name", "position", "organization", "userType", "sector",
+    p_cols = [c for c in ["priority", "name", "position", "organization", "userType", "sector",
                           "keep_for_person", "wo_finden", "talking_point", "why_person", "LinkedIn",
                           "li_headline", "li_followers", "City", "Country", "ProfileURL"] if c in allp.columns]
 
@@ -371,15 +356,6 @@ def main():
 
     W.update({"sessions": 70, "sector": 22, "ProfileURL": 30})
 
-    # ---- Univention-Team: eigene Kolleg:innen (networking + Programm-Speaker), mit Talks und eigenem Stand ----
-    team = allp[(allp["sector"] == TEAM_SECTOR) | allp["organization"].astype(str).str.contains(UNIVENTION_RE)]
-    team = team[[c for c in ["name", "position", "userType", "wo_finden", "LinkedIn", "ProfileURL"] if c in team.columns]]
-    if len(speakers):
-        us = speakers[speakers["organization"].astype(str).str.contains(UNIVENTION_RE)
-                      & ~speakers["name"].isin(team["name"])]
-        team = pd.concat([team, pd.DataFrame({"name": us["name"], "position": us["position"],
-                                              "userType": "speaker", "wo_finden": us["sessions"]})], ignore_index=True)
-    print(f"Univention-Team: {len(team)} Personen")
     with pd.ExcelWriter(OUT, engine="openpyxl") as xw:
         ab_cols = [c for c in ["id", "visit_priority", "hall", "stand", "exhibitor", "visit_goal", "why",
                                "booth_question", "contacts_to_meet", "same_stand_with", "is_competitor",
@@ -419,10 +395,9 @@ def main():
         write_sheet(xw, ks[k_cols], SHEETS["meetings"], W, mark=(ks["tier"] == "empfohlen"))
         write_sheet(xw, allp[p_cols], SHEETS["people"], W)
         write_sheet(xw, speakers, SHEETS["speakers"], W)
-        write_sheet(xw, team, SHEETS["team"], W)
         write_overview(xw.sheets[SHEETS["overview"]], b, a, report, allp, speakers, booths, talks,
                        n_b2=len(b_more), n_a2=int((ts["_r"] == 2).sum()), n_k2=len(report_more),
-                       mgmt=report_mgmt, n_new=len(new_ids))
+                       mgmt=report_mgmt)
 
     print(f"Booths Pflicht: {len(b)} ({b['main_stand'].nunique()} Stand) + {len(b_more)} optional | "
           f"Agenda Pflicht: {len(a)} + {len(a_more)} optional | "
