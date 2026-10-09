@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+scc_token.txt
+openai_key.txt
+site_password.txt
+.linkedin_profile/
