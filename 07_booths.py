@@ -5,7 +5,8 @@
 Girdi : data/raw/exhibitors/*.json (01_collect.py exhibitors), data/companies_classified.csv (03),
         data/people_prescored.csv + llm_cache/people_v1.jsonl (05)
 Cikti : data/booths.csv  (09_plan.py bunu Excel'e koyar)
-Cache : data/llm_cache/booths_v1.jsonl
+Cache : data/llm_cache/booths_v3.jsonl
+Opsiyonel: data/known_orgs.csv (bestehende Kunden/Partner, bkz. scc_common.load_known_orgs)
 
 Her stand icin: ziyaret onceligi (0-3), ziyaret amaci, rakip mi, gerekce, standda sorulacak soru,
 ve o firmadan fuarda olan oncelikli kisilerimiz.
@@ -15,15 +16,17 @@ import re
 
 import pandas as pd
 
-from scc_common import (DATA, UNIVENTION_CONTEXT, get_openai_client, llm_json, load_pages,
-                        load_people_scored, org_key, print, run_cached)
+from scc_common import (DATA, ORGANIZER_RE, QUESTION_RULES, UNIVENTION_CONTEXT, UNIVENTION_RE, get_openai_client,
+                        llm_json, load_known_orgs, load_pages, load_people_scored, org_key, print, prio_label, relationship,
+                        run_cached)
 
 BATCH = 20
-CACHE = DATA / "llm_cache" / "booths_v2.jsonl"   # v2: daha siki kalibrasyon
+CACHE = DATA / "llm_cache" / "booths_v3.jsonl"   # v3: keine Grundlagenfragen, Wettbewerber = Marktbeobachtung
 SKIP_CATS = {"SCC 26", "Segments", "Routes", "Miscellaneous"}
 
 GOALS = ["Partner-Potenzial", "Kunde/Betreiber", "Wettbewerber beobachten",
          "Souveränität/Ökosystem", "Trend/Inspiration", "Nicht besuchen"]
+OWN_GOAL = "Eigener Stand (Univention)"
 
 SYSTEM = UNIVENTION_CONTEXT + """
 
@@ -46,6 +49,8 @@ visit_priority (0-3):
     Fachverfahren ohne Identitätsbezug
 0 = nicht relevant
 our_priority_contacts ist nur ein Tie-Breaker: viele Kontakte machen einen Stand NICHT zur Pflicht.
+relationship: bestehende Beziehung (Kunde/Partner/in Kontakt), falls bekannt. Bekannte Kunden/Partner sind
+eher Beziehungspflege: die Frage soll an laufende Themen anknüpfen, nicht das Unternehmen erst kennenlernen.
 
 is_competitor: nur wenn die Organisation SELBST ein IAM-/Directory-/SSO- oder Schulplattform-Produkt
 anbietet, das mit UCS/Nubus konkurriert. Open-Source-Partner aus dem openDesk-Ökosystem sind KEINE
@@ -53,8 +58,11 @@ Wettbewerber (visit_goal "Souveränität/Ökosystem").
 
 visit_goal: der Hauptgrund für den Besuch.
 why: EIN knapper Satz (max. 20 Wörter) auf Deutsch, nur belegbar.
-booth_question: EINE konkrete Frage (max. 25 Wörter, Deutsch), die wir am Stand stellen, um
-Partnerschaft, Bedarf oder Wettbewerbsposition herauszufinden."""
+booth_question: EINE konkrete Frage (max. 25 Wörter, Deutsch), die ein erfahrener Univention-Produktmanager
+am Stand wirklich stellen würde, um Partnerschaft, Bedarf oder Wettbewerbsposition herauszufinden.
+Bei visit_priority 0-1: leerer String.
+
+""" + QUESTION_RULES
 
 ITEM_SCHEMA = {
     "type": "object", "additionalProperties": False,
@@ -81,8 +89,11 @@ def main():
     comp = pd.read_csv(DATA / "companies_classified.csv")
     comp_by_key = comp.drop_duplicates("org_key").set_index("org_key")
     people = load_people_scored()
+    known = load_known_orgs()
 
-    ex = [e for e in ex if not re.search(r"univention|smart country convention|messe berlin", e.get("name", ""), re.I)]
+    # Veranstalter raus; der eigene Univention-Stand bleibt drin (fuer "Wo zu finden" der Kolleg:innen),
+    # wird aber nicht bewertet
+    ex = [e for e in ex if not ORGANIZER_RE.search(e.get("name", ""))]
     rows = []
     for e in ex:
         cats = [c.get("name", "") for c in e.get("categories") or []]
@@ -102,13 +113,15 @@ def main():
             "teaser": (e.get("teaser") or "").strip(),
             "n_booth_sessions": len(e.get("eventdates") or []),
             "org_key": k,
+            "own": bool(UNIVENTION_RE.search(e.get("name", ""))),
+            "relationship": relationship(known, e.get("name", "")),
             "org_relevance": None if c is None else c.get("relevance"),
             "org_sector": "" if c is None else c.get("sector", ""),
             "org_why": "" if c is None else c.get("why", ""),
             "n_registered": len(ppl),
             "our_priority_contacts": len(top),
             "contacts_to_meet": " | ".join(
-                f"{r['name']} ({r['position'] or r['userType']}) [P{int(r['priority'])}]" for _, r in top.head(6).iterrows()),
+                f"{r['name']} ({r['position'] or r['userType']}) [Prio {prio_label(r['priority'])}]" for _, r in top.head(6).iterrows()),
         })
     df = pd.DataFrame(rows)
 
@@ -119,12 +132,21 @@ def main():
         client = client or get_openai_client()
         items = [{k: r[k] for k in ("id", "exhibitor", "teaser", "categories", "partner_level", "city",
                                     "org_relevance", "org_sector", "org_why", "our_priority_contacts",
-                                    "n_booth_sessions")} for r in batch]
+                                    "n_booth_sessions", "relationship")} for r in batch]
         return llm_json(client, SYSTEM, items, ITEM_SCHEMA, "booths")
 
-    res = run_cached(df.to_dict("records"), "id", CACHE, fn, BATCH)
+    res = run_cached(df[~df["own"]].to_dict("records"), "id", CACHE, fn, BATCH)
     sc = pd.DataFrame(res.values()).drop_duplicates("id", keep="last")
     df = df.merge(sc, on="id", how="left")
+    df.loc[df["own"], ["visit_priority", "visit_goal", "is_competitor", "why", "booth_question"]] = \
+        [0, OWN_GOAL, False, "Univention-Stand: Treffpunkt des Teams", ""]
+    # Sicherheitsnetz: trotz Prompt durchgerutschte Grundlagenfragen ("Unterstuetzen Sie OIDC/SAML ...?") leeren
+    q = df["booth_question"].fillna("")
+    basic = (q.str.contains(r"(?i)\b(?:oidc|openid|saml|ldap|scim|keycloak)\b")
+             & q.str.contains(r"(?i)unterstütz|bieten sie|integration|schnittstelle|anbindung|standard"))
+    if basic.any():
+        print(f"Grundlagenfrage entfernt ({int(basic.sum())}): " + ", ".join(df.loc[basic, "exhibitor"].head(15)))
+    df.loc[basic, "booth_question"] = ""
 
     df["_stand"] = df["stand"].map(stand_sort_key)
     df = df.sort_values(["visit_priority", "our_priority_contacts"], ascending=False).drop(columns="_stand")

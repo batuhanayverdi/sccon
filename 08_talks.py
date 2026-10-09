@@ -12,8 +12,8 @@ speaker'lar (bizim kisi skorlariyla) ve ayni saatteki diger onemli session'lar (
 
 import pandas as pd
 
-from scc_common import (DATA, UNIVENTION_CONTEXT, get_openai_client, llm_json, load_pages,
-                        load_people_scored, print, run_cached)
+from scc_common import (DATA, UNIVENTION_CONTEXT, UNIVENTION_RE, get_openai_client, llm_json, load_pages,
+                        load_people_scored, print, prio_label, run_cached)
 
 BATCH = 15
 CACHE = DATA / "llm_cache" / "talks_v2.jsonl"   # v2: daha siki kalibrasyon
@@ -47,6 +47,7 @@ relevance (0-3):
     Cybersecurity allgemein, Startup-Pitches ohne IAM-Bezug, Firmen-Keynotes ohne Bezug
 0 = nicht relevant: Karriere-/Recruiting-Events, Awards, reine Fachthemen (Bau, Umwelt, Mobilität usw.)
 Speaker mit hoher speaker_priority (0-3, unsere Kontaktbewertung) können eine 2 zu einer 3 machen.
+(Im Feld speakers steht die Kontaktbewertung als "[Prio 1]" = wichtigster Kontakt, "[Prio 2]", "[Prio 3]".)
 
 topics: 1-3 passende Themen.
 why: EIN knapper Satz (max. 20 Wörter) auf Deutsch.
@@ -81,7 +82,7 @@ def main():
                 pr = int(people.at[uid, "priority"])
             best = max(best, pr)
             spk.append(f"{p.get('firstName', '')} {p.get('lastName', '')} ({p.get('position', '')}, "
-                       f"{p.get('organization', '')})" + (f" [P{pr}]" if pr else ""))
+                       f"{p.get('organization', '')})" + (f" [Prio {prio_label(pr)}]" if pr else ""))
         orgs = [s.get("organizationName") or ""] + [o.get("name", "") for o in s.get("organizations") or []]
         rows.append({
             "id": s["id"],
@@ -113,6 +114,11 @@ def main():
     # kural: Startup-Pitch'ler (10 dk) IAM/Kimlik konusu degilse en fazla 2
     pitch = df["title"].str.match(r"(?i)^pitch\b") & ~df["topics"].fillna("").str.contains("IAM")
     df.loc[pitch & (df["relevance"] == 3), "relevance"] = 2
+    # Univention-eigene Beitraege (Veranstalter oder Speaker von Univention): immer Prio 1, Team-Praesenz
+    own = (df["host_org"] + " " + df["speakers"]).str.contains(UNIVENTION_RE)
+    df.loc[own, ["relevance", "why", "goal"]] = [3, "Eigener Beitrag von Univention",
+                                                 "Team-Präsenz zeigen, danach mit Zuhörenden ins Gespräch kommen"]
+    print(f"Univention-Beitraege: {int(own.sum())}")
 
     # cakisma: ayni gun, zaman araligi kesisen ve relevance>=2 olan diger session'lar
     df["_s"] = pd.to_datetime(df["date"] + " " + df["start"], errors="coerce")
@@ -121,7 +127,7 @@ def main():
     overlaps = []
     for _, r in df.iterrows():
         o = hot[(hot["id"] != r["id"]) & (hot["_s"] < r["_e"]) & (hot["_e"] > r["_s"])]
-        overlaps.append(" | ".join(f"R{int(x.relevance)} {x.start} {x.title[:50]}" for x in o.itertuples()))
+        overlaps.append(" | ".join(f"Prio {prio_label(x.relevance)} {x.start} {x.title[:50]}" for x in o.itertuples()))
     df["overlaps_with"] = overlaps
     # ayni baslik birden fazla slotta varsa (tekrarlanan booth programlari) diger slotlari goster
     slots = df.groupby("title").apply(lambda g: list(zip(g["id"], g["date"].str[5:] + " " + g["start"])))

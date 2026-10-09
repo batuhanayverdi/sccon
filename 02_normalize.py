@@ -12,6 +12,7 @@ Cikti:
 
 import json
 import re
+from datetime import date, datetime
 
 import pandas as pd
 
@@ -74,6 +75,22 @@ def main():
         "categories": df.get("categories", pd.Series([[]] * len(df))).map(
             lambda x: ", ".join(map(str, x)) if isinstance(x, list) else ""),
     })
+
+    # first_seen: kisi ilk hangi calistirmada goruldu? (09/10 "Neu" isareti icin)
+    # Onceki people.csv varsa oradaki tarih korunur; o dosyada kolon yoksa dosyanin tarihi kullanilir.
+    today = date.today().isoformat()
+    prev_f = OUT_DIR / "people.csv"
+    seen = {}
+    if prev_f.exists():
+        prev = pd.read_csv(prev_f, dtype=str)
+        prev_day = datetime.fromtimestamp(prev_f.stat().st_mtime).date().isoformat()
+        col = prev["first_seen"] if "first_seen" in prev.columns else pd.Series(prev_day, index=prev.index)
+        seen = dict(zip(prev["id"], col.fillna(prev_day)))
+    people["first_seen"] = people["id"].map(seen).fillna(today)
+    n_new = int((people["first_seen"] == today).sum()) if seen else 0
+    if seen:
+        gone = len(set(seen) - set(people["id"]))
+        print(f"Onceki calistirmaya gore: {n_new} yeni kisi, {gone} kisi artik listede yok.")
 
     # kurum tablosu: ayni org_key altinda en sik gecen yazilisi goster
     has_org = people[people["org_key"] != ""]
